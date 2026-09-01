@@ -508,7 +508,16 @@ const startBtn = document.getElementById("startBtn");
 const offHint = document.getElementById("offHint");
 const screenOff = document.getElementById("screenOff");
 
-let connectedCount = 0;
+const activeConns = new Set();
+function refreshPairStatus() {
+  const n = activeConns.size;
+  pairStatus.textContent = n > 0 ? ("接続済み: " + n + "台") : "スマホ側の待受中...";
+  pairStatus.classList.toggle("ok", n > 0);
+}
+function dropConn(conn) {
+  if (activeConns.delete(conn)) refreshPairStatus();
+}
+
 const shortCode = Math.floor(1000 + Math.random() * 9000);
 const peerId = "tdc-" + shortCode;
 
@@ -532,22 +541,24 @@ try {
   peer.on("connection", (conn) => {
     pairStatus.textContent = "接続処理中...";
     conn.on("open", () => {
-      connectedCount++;
-      pairStatus.textContent = "接続済み: " + connectedCount + "台";
-      pairStatus.classList.add("ok");
+      activeConns.add(conn);
+      refreshPairStatus();
+      // PeerJSの'close'は、相手がタブを閉じる/電波切れ等で正常に切断しなかった場合
+      // 発火しないことがあるため、WebRTC自体の接続状態も監視して確実に除外する
+      const pc = conn.peerConnection;
+      if (pc) {
+        pc.addEventListener("connectionstatechange", () => {
+          if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
+            dropConn(conn);
+          }
+        });
+      }
     });
     conn.on("data", (data) => {
       if (data === "flash") doFlash();
     });
-    conn.on("close", () => {
-      connectedCount = Math.max(0, connectedCount - 1);
-      pairStatus.textContent = connectedCount > 0 ? ("接続済み: " + connectedCount + "台") : "スマホ側の待受中...";
-      if (connectedCount === 0) pairStatus.classList.remove("ok");
-    });
-    conn.on("error", () => {
-      pairStatus.textContent = "データ接続エラー(通信環境を確認)";
-      pairStatus.classList.remove("ok");
-    });
+    conn.on("close", () => dropConn(conn));
+    conn.on("error", () => dropConn(conn));
   });
   peer.on("error", (err) => {
     pairStatus.textContent = "接続エラー: " + (err && err.type ? err.type : "unknown");
