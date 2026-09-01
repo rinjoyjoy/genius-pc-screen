@@ -477,6 +477,10 @@ const TARGET_B = 17;               // パズル ペア①(大) 正解
 const TARGET_C = 51;               // パズル ペア②(小) 正解
 const TARGET_D = 63;               // パズル ペア②(大) 正解
 
+// リモコン(genius-pc-remote)をVercel等にデプロイした後のURLをここに設定する
+// 例: "https://genius-pc-remote.vercel.app"
+const REMOTE_BASE_URL = "https://genius-pc-remote.vercel.app";
+
 /* ============================================================
    状態管理
    ============================================================ */
@@ -512,7 +516,7 @@ try {
   const peer = new Peer(peerId);
   peer.on("open", (id) => {
     pairCode.textContent = id;
-    const remoteUrl = location.href.replace(/[^\/]*$/, "remote.html") + "?id=" + encodeURIComponent(id);
+    const remoteUrl = REMOTE_BASE_URL + "/?id=" + encodeURIComponent(id);
     if (window.QRCode) {
       QRCode.toCanvas(qrCanvas, remoteUrl, { width: 180, margin: 1 }, () => {});
     }
