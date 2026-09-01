@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>起動コンソール</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
+<style>
+  /* =========================================================
+     CONFIG は script 内の CONFIG セクションを参照。
+     このファイルは以下の状態を遷移する:
+     [off-setup] ペアリング用QR表示
+       -> (「開始」ボタン / Hキー) [off] 黒画面。リモートのFLASHで一瞬点灯
+       -> (Enterキー) [boot] 起動ログ風アニメ
+       -> [lock] ロック画面(パスワード入力)
+       -> [desktop] 偽デスクトップ -> エクスプローラ -> アプリウィンドウ(元のパズル)
+     ========================================================= */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: "Share Tech Mono", monospace;
+  }
+
+  .screen {
+    position: fixed;
+    inset: 0;
+    display: none;
+  }
+  .screen.active { display: flex; }
+
+  /* ---------- OFF / SETUP ---------- */
+  #screenOff {
+    background: #000;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    color: #4dffb0;
+    cursor: default;
+  }
+  #screenOff.flash {
+    animation: monitorFlash 0.7s ease-out;
+  }
+  @keyframes monitorFlash {
+    0%   { background: #000; }
+    8%   { background: #0b3a26; box-shadow: inset 0 0 200px rgba(77,255,176,0.5); }
+    20%  { background: #010a07; }
+    30%  { background: #143d2b; }
+    45%  { background: #010a07; }
+    100% { background: #000; }
+  }
+
+  .pairing {
+    background: #05100a;
+    border: 1px solid #245c43;
+    border-radius: 10px;
+    padding: 26px 30px;
+    text-align: center;
+    color: #baffe0;
+  }
+  .pairing h2 {
+    font-family: "VT323", monospace;
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: #6fd6ab;
+    margin: 0 0 14px;
+    font-weight: normal;
+  }
+  .pairing canvas { background: #fff; padding: 8px; border-radius: 6px; }
+  .pairing .code {
+    margin-top: 12px;
+    font-family: "VT323", monospace;
+    font-size: 26px;
+    letter-spacing: 4px;
+    color: #ffcf4d;
+  }
+  .pairing .pstatus {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #ff9a4d;
+  }
+  .pairing .pstatus.ok { color: #4dffb0; }
+  .pairing button {
+    margin-top: 18px;
+    background: #143d2b;
+    border: 1px solid #4dffb0;
+    color: #baffe0;
+    font-family: "VT323", monospace;
+    font-size: 18px;
+    letter-spacing: 2px;
+    padding: 8px 22px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .pairing .note { margin-top: 14px; font-size: 11px; color: #2fa876; line-height: 1.6; }
+
+  #offHint {
+    position: fixed;
+    bottom: 14px;
+    right: 18px;
+    font-size: 11px;
+    color: #123322;
+    letter-spacing: 1px;
+  }
+
+  /* ---------- BOOT ---------- */
+  #screenBoot {
+    background: #000;
+    color: #4dffb0;
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 40px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+  #bootLines { white-space: pre-wrap; }
+  #bootLines span { display: block; opacity: 0; animation: bootIn 0.05s forwards; }
+  @keyframes bootIn { to { opacity: 1; } }
+  .cursor { display: inline-block; width: 9px; height: 15px; background: #4dffb0; animation: blink 1s step-end infinite; vertical-align: middle; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- LOCK ---------- */
+  #screenLock {
+    background: linear-gradient(160deg, #0d2b46 0%, #071a2c 55%, #030c16 100%);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: "Yu Gothic UI", "Segoe UI", system-ui, sans-serif;
+    cursor: default;
+  }
+  #lockClock {
+    font-size: 74px;
+    font-weight: 200;
+    letter-spacing: 2px;
+    text-shadow: 0 2px 18px rgba(0,0,0,0.6);
+  }
+  #lockDate {
+    font-size: 18px;
+    font-weight: 300;
+    margin-top: 4px;
+    opacity: 0.9;
+  }
+  #lockPressHint {
+    margin-top: 60px;
+    font-size: 14px;
+    font-weight: 300;
+    opacity: 0.75;
+    animation: fadePulse 2.2s ease-in-out infinite;
+  }
+  @keyframes fadePulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.85; } }
+
+  .lockPassBox {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 40px;
+  }
+  .lockPassBox.show { display: flex; }
+  .lockAvatar {
+    width: 76px;
+    height: 76px;
+    border-radius: 50%;
+    background: #3a5877;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    margin-bottom: 10px;
+  }
+  .lockName { font-size: 16px; font-weight: 400; margin-bottom: 14px; }
+  #lockPass {
+    width: 240px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.35);
+    color: #fff;
+    font-size: 15px;
+    padding: 9px 12px;
+    border-radius: 3px;
+    outline: none;
+    text-align: center;
+    letter-spacing: 4px;
+  }
+  #lockPass::placeholder { color: rgba(255,255,255,0.5); letter-spacing: normal; }
+  #lockError {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #ff8a8a;
+    min-height: 16px;
+  }
+  .lockShake { animation: lockShake 0.35s; }
+  @keyframes lockShake {
+    0%,100% { transform: translateX(0); }
+    20% { transform: translateX(-9px); }
+    40% { transform: translateX(9px); }
+    60% { transform: translateX(-6px); }
+    80% { transform: translateX(6px); }
+  }
+
+  /* ---------- DESKTOP ---------- */
+  #screenDesktop {
+    background: linear-gradient(160deg, #1b3350 0%, #0e2038 60%, #081527 100%);
+    flex-direction: column;
+    font-family: "Yu Gothic UI", "Segoe UI", system-ui, sans-serif;
+    animation: unlockIn 0.4s ease-out;
+  }
+  @keyframes unlockIn { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .desktopArea { flex: 1; position: relative; padding: 18px; }
+
+  .icon {
+    width: 84px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: #fff;
+    font-size: 12px;
+    text-align: center;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+    cursor: default;
+    user-select: none;
+    padding: 6px;
+    border-radius: 4px;
+  }
+  .icon:hover { background: rgba(255,255,255,0.08); }
+  .icon .glyph {
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .folderIcon {
+    width: 40px; height: 30px;
+    background: #ffca4d;
+    border-radius: 0 4px 4px 4px;
+    position: relative;
+  }
+  .folderIcon::before {
+    content: "";
+    position: absolute;
+    top: -8px; left: 0;
+    width: 18px; height: 8px;
+    background: #ffca4d;
+    border-radius: 3px 3px 0 0;
+  }
+  .binIcon {
+    width: 26px; height: 32px;
+    background: #cdd6e0;
+    border-radius: 3px 3px 6px 6px;
+    border: 2px solid #9aa7b5;
+    border-top: none;
+  }
+  .fileIcon {
+    width: 30px; height: 38px;
+    background: #eef3f8;
+    border-radius: 2px;
+    position: relative;
+    box-shadow: 0 0 0 1px #9aa7b5;
+  }
+  .fileIcon::after {
+    content: "</>";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #245c43;
+    font-family: monospace;
+  }
+
+  #taskbar {
+    height: 44px;
+    background: rgba(10,20,35,0.85);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    color: #fff;
+    font-size: 13px;
+    gap: 14px;
+  }
+  .startBtn {
+    width: 30px; height: 30px;
+    border-radius: 4px;
+    background: #0078d7;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    cursor: default;
+  }
+  #taskClock { margin-left: auto; font-size: 12px; opacity: 0.9; }
+
+  /* windows */
+  .winbox {
+    position: absolute;
+    background: #f3f6fa;
+    border-radius: 8px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    color: #222;
+  }
+  .winbox.show { display: flex; }
+  .winbar {
+    height: 34px;
+    background: #e4e9ef;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    font-size: 12px;
+    color: #333;
+    cursor: grab;
+    user-select: none;
+    border-bottom: 1px solid #d4dae1;
+  }
+  .winbar .wtitle { flex: 1; }
+  .winbtn {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    margin-left: 6px;
+    cursor: pointer;
+  }
+  .winbtn.close { background: #ff5f57; }
+  .winbtn.min { background: #ffbd2e; }
+  .winbody { flex: 1; overflow: auto; background: #fff; }
+
+  /* explorer */
+  #explorerWin { width: 560px; height: 380px; left: 140px; top: 90px; }
+  .expLayout { display: flex; height: 100%; }
+  .expSidebar {
+    width: 150px;
+    background: #f7f9fb;
+    border-right: 1px solid #e0e4e9;
+    font-size: 12.5px;
+    padding: 10px 0;
+  }
+  .expSidebar .sItem {
+    padding: 6px 14px;
+    color: #444;
+    cursor: default;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .expSidebar .sItem.active { background: #d9e8fb; color: #0057b8; }
+  .expSidebar .sItem:hover { background: #eef3f8; }
+  .expMain { flex: 1; display: flex; flex-direction: column; }
+  .expBreadcrumb {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #555;
+    border-bottom: 1px solid #eee;
+  }
+  .expList { flex: 1; padding: 14px; }
+  .expEntry {
+    width: 92px;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    text-align: center;
+    padding: 8px 6px;
+    border-radius: 4px;
+    cursor: default;
+    color: #333;
+  }
+  .expEntry:hover, .expEntry.sel { background: #d9e8fb; }
+  .expEmpty { color: #999; font-size: 12px; padding: 20px; }
+
+  /* app window (元のパズル画面) */
+  #appWin { width: 720px; height: 560px; left: 260px; top: 60px; }
+  #appWin .winbody { background: #05070a; padding: 0; }
+</style>
+</head>
+<body>
+
+<!-- ============== OFF / セットアップ ============== -->
+<div class="screen active" id="screenOff">
+  <div class="pairing" id="pairing">
+    <h2>&gt; REMOTE PAIRING</h2>
+    <canvas id="qrCanvas" width="180" height="180"></canvas>
+    <div class="code" id="pairCode">-- -- -- --</div>
+    <div class="pstatus" id="pairStatus">スマホ側の待受中...</div>
+    <button id="startBtn">開始(黒画面にする)</button>
+    <div class="note">スマホで remote.html を開くか QR を読み取り、<br>接続後この画面は非表示になります。<br>非表示中は H キーで再表示できます。</div>
+  </div>
+</div>
+<div id="offHint">ENTER で起動</div>
+
+<!-- ============== BOOT ============== -->
+<div class="screen" id="screenBoot">
+  <div id="bootLines"></div>
+</div>
+
+<!-- ============== LOCK ============== -->
+<div class="screen" id="screenLock">
+  <div id="lockClock">00:00</div>
+  <div id="lockDate">----年--月--日</div>
+  <div id="lockPressHint">キーを押してロックを解除</div>
+  <div class="lockPassBox" id="lockPassBox">
+    <div class="lockAvatar">🧑‍💻</div>
+    <div class="lockName">USER</div>
+    <input id="lockPass" type="password" placeholder="パスワード" autocomplete="off">
+    <div id="lockError"></div>
+  </div>
+</div>
+
+<!-- ============== DESKTOP ============== -->
+<div class="screen" id="screenDesktop">
+  <div class="desktopArea" id="desktopArea">
+    <div class="icon" id="iconExplorer">
+      <div class="glyph"><div class="folderIcon"></div></div>
+      <span>PC</span>
+    </div>
+    <div class="icon" id="iconBin" style="position:absolute; top:110px; left:0;">
+      <div class="glyph"><div class="binIcon"></div></div>
+      <span>ゴミ箱</span>
+    </div>
+
+    <!-- エクスプローラ -->
+    <div class="winbox" id="explorerWin">
+      <div class="winbar" data-drag>
+        <span class="wtitle">PC</span>
+        <div class="winbtn min"></div>
+        <div class="winbtn close" id="explorerClose"></div>
+      </div>
+      <div class="winbody">
+        <div class="expLayout">
+          <div class="expSidebar">
+            <div class="sItem" data-path="quick">★ クイックアクセス</div>
+            <div class="sItem" data-path="pc">💻 PC</div>
+            <div class="sItem" data-path="desktop">🖥 デスクトップ</div>
+            <div class="sItem active" data-path="documents">📄 ドキュメント</div>
+            <div class="sItem" data-path="downloads">⬇ ダウンロード</div>
+          </div>
+          <div class="expMain">
+            <div class="expBreadcrumb" id="expBreadcrumb">PC &gt; ドキュメント</div>
+            <div class="expList" id="expList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- アプリウィンドウ(元のパズル) -->
+    <div class="winbox" id="appWin">
+      <div class="winbar" data-drag>
+        <span class="wtitle">time_drive_console</span>
+        <div class="winbtn min"></div>
+        <div class="winbtn close" id="appClose"></div>
+      </div>
+      <div class="winbody" id="appBody"></div>
+    </div>
+  </div>
+  <div id="taskbar">
+    <div class="startBtn">⊞</div>
+    <div id="taskClock">00:00</div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG - ここを編集して調整する
+   ============================================================ */
+const LOCK_PASSWORD = "2049";      // ロック画面のパスワード
+const TARGET_A = 8;                // パズル ペア①(小) 正解
+const TARGET_B = 17;               // パズル ペア①(大) 正解
+const TARGET_C = 51;               // パズル ペア②(小) 正解
+const TARGET_D = 63;               // パズル ペア②(大) 正解
+
+/* ============================================================
+   状態管理
+   ============================================================ */
+let state = "off-setup"; // off-setup -> off -> boot -> lock-idle -> lock-pass -> desktop
+
+const screens = {
+  off: document.getElementById("screenOff"),
+  boot: document.getElementById("screenBoot"),
+  lock: document.getElementById("screenLock"),
+  desktop: document.getElementById("screenDesktop"),
+};
+function showScreen(name) {
+  Object.values(screens).forEach(s => s.classList.remove("active"));
+  screens[name].classList.add("active");
+}
+
+/* ============================================================
+   ペアリング (PeerJS) - スマホから「一瞬点灯」を受信
+   ============================================================ */
+const pairing = document.getElementById("pairing");
+const pairCode = document.getElementById("pairCode");
+const pairStatus = document.getElementById("pairStatus");
+const qrCanvas = document.getElementById("qrCanvas");
+const startBtn = document.getElementById("startBtn");
+const offHint = document.getElementById("offHint");
+const screenOff = document.getElementById("screenOff");
+
+let connectedCount = 0;
+const shortCode = Math.floor(1000 + Math.random() * 9000);
+const peerId = "tdc-" + shortCode;
+
+try {
+  const peer = new Peer(peerId);
+  peer.on("open", (id) => {
+    pairCode.textContent = id;
+    const remoteUrl = location.href.replace(/[^\/]*$/, "remote.html") + "?id=" + encodeURIComponent(id);
+    if (window.QRCode) {
+      QRCode.toCanvas(qrCanvas, remoteUrl, { width: 180, margin: 1 }, () => {});
+    }
+  });
+  peer.on("connection", (conn) => {
+    connectedCount++;
+    pairStatus.textContent = "接続済み: " + connectedCount + "台";
+    pairStatus.classList.add("ok");
+    conn.on("data", (data) => {
+      if (data === "flash") doFlash();
+    });
+    conn.on("close", () => {
+      connectedCount = Math.max(0, connectedCount - 1);
+      pairStatus.textContent = connectedCount > 0 ? ("接続済み: " + connectedCount + "台") : "スマホ側の待受中...";
+      if (connectedCount === 0) pairStatus.classList.remove("ok");
+    });
+  });
+  peer.on("error", () => {
+    pairStatus.textContent = "接続エラー(ネットワークを確認)";
+  });
+} catch (e) {
+  pairStatus.textContent = "リモート機能を初期化できませんでした";
+}
+
+function doFlash() {
+  if (state !== "off") return;
+  screenOff.classList.add("flash");
+  setTimeout(() => screenOff.classList.remove("flash"), 700);
+}
+
+startBtn.addEventListener("click", hidePairing);
+function hidePairing() {
+  state = "off";
+  pairing.style.display = "none";
+}
+
+/* ============================================================
+   グローバルキー操作
+   ============================================================ */
+document.addEventListener("keydown", (e) => {
+  if (state === "off-setup" && (e.key === "h" || e.key === "H")) {
+    hidePairing();
+    return;
+  }
+  if (state === "off") {
+    if (e.key === "h" || e.key === "H") {
+      state = "off-setup";
+      pairing.style.display = "flex";
+      return;
+    }
+    if (e.key === "Enter") startBoot();
+    return;
+  }
+  if (state === "lock-idle") {
+    state = "lock-pass";
+    lockPassBox.classList.add("show");
+    lockPressHint.style.display = "none";
+    lockPass.focus();
+    return;
+  }
+});
+
+/* ============================================================
+   起動(BOOT)アニメーション
+   ============================================================ */
+const bootLinesEl = document.getElementById("bootLines");
+const BOOT_LINES = [
+  "NODE-CORE BIOS v4.02.1",
+  "Checking quantum entanglement buffers ... OK",
+  "Mounting TIME-DRIVE partition ... OK",
+  "Loading kernel modules ... OK",
+  "Verifying entangled node table ... OK",
+  "Starting session manager ...",
+  "Welcome.",
+];
+function startBoot() {
+  state = "boot";
+  showScreen("boot");
+  bootLinesEl.innerHTML = "";
+  let i = 0;
+  function next() {
+    if (i >= BOOT_LINES.length) {
+      setTimeout(enterLock, 500);
+      return;
+    }
+    const span = document.createElement("span");
+    span.textContent = BOOT_LINES[i];
+    bootLinesEl.appendChild(span);
+    i++;
+    setTimeout(next, 260 + Math.random() * 180);
+  }
+  next();
+}
+
+/* ============================================================
+   ロック画面
+   ============================================================ */
+const lockClock = document.getElementById("lockClock");
+const lockDate = document.getElementById("lockDate");
+const lockPressHint = document.getElementById("lockPressHint");
+const lockPassBox = document.getElementById("lockPassBox");
+const lockPass = document.getElementById("lockPass");
+const lockError = document.getElementById("lockError");
+const screenLockEl = document.getElementById("screenLock");
+
+function updateClock() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  lockClock.textContent = hh + ":" + mm;
+  lockDate.textContent = now.getFullYear() + "年" + (now.getMonth()+1) + "月" + now.getDate() + "日";
+  const taskClock = document.getElementById("taskClock");
+  if (taskClock) taskClock.textContent = hh + ":" + mm;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+function enterLock() {
+  state = "lock-idle";
+  lockPassBox.classList.remove("show");
+  lockPressHint.style.display = "block";
+  lockPass.value = "";
+  lockError.textContent = "";
+  showScreen("lock");
+}
+
+lockPass.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") checkPassword();
+});
+function checkPassword() {
+  if (lockPass.value === LOCK_PASSWORD) {
+    enterDesktop();
+  } else {
+    lockError.textContent = "パスワードが正しくありません";
+    screenLockEl.classList.add("lockShake");
+    lockPass.value = "";
+    setTimeout(() => screenLockEl.classList.remove("lockShake"), 350);
+  }
+}
+
+/* ============================================================
+   デスクトップ / エクスプローラ
+   ============================================================ */
+const explorerWin = document.getElementById("explorerWin");
+const appWin = document.getElementById("appWin");
+const iconExplorer = document.getElementById("iconExplorer");
+const explorerClose = document.getElementById("explorerClose");
+const appClose = document.getElementById("appClose");
+const expBreadcrumb = document.getElementById("expBreadcrumb");
+const expList = document.getElementById("expList");
+const sidebarItems = document.querySelectorAll(".sItem");
+
+function enterDesktop() {
+  state = "desktop";
+  showScreen("desktop");
+}
+
+let lastClick = { path: null, t: 0 };
+function renderFolder(path) {
+  sidebarItems.forEach(el => el.classList.toggle("active", el.dataset.path === path));
+  const labels = { quick: "クイックアクセス", pc: "PC", desktop: "デスクトップ", documents: "ドキュメント", downloads: "ダウンロード" };
+  expBreadcrumb.textContent = "PC > " + (labels[path] || path);
+  expList.innerHTML = "";
+  if (path === "documents") {
+    const entry = document.createElement("div");
+    entry.className = "expEntry";
+    entry.innerHTML = '<div class="fileIcon"></div><span>time_drive_console</span>';
+    entry.addEventListener("click", () => {
+      const now = Date.now();
+      const isDbl = lastClick.path === "console" && (now - lastClick.t) < 400;
+      lastClick = { path: "console", t: now };
+      document.querySelectorAll(".expEntry").forEach(e => e.classList.remove("sel"));
+      entry.classList.add("sel");
+      if (isDbl) openApp();
+    });
+    expList.appendChild(entry);
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "expEmpty";
+    empty.textContent = "このフォルダーは空です";
+    expList.appendChild(empty);
+  }
+}
+sidebarItems.forEach(el => {
+  el.addEventListener("click", () => renderFolder(el.dataset.path));
+});
+renderFolder("documents");
+
+let explorerOpenedOnce = false;
+iconExplorer.addEventListener("dblclick", () => {
+  explorerWin.classList.add("show");
+  bringToFront(explorerWin);
+  explorerOpenedOnce = true;
+});
+explorerClose.addEventListener("click", () => explorerWin.classList.remove("show"));
+appClose.addEventListener("click", () => appWin.classList.remove("show"));
+
+function bringToFront(win) {
+  document.querySelectorAll(".winbox").forEach(w => w.style.zIndex = 1);
+  win.style.zIndex = 2;
+}
+document.querySelectorAll(".winbox").forEach(w => {
+  w.addEventListener("mousedown", () => bringToFront(w));
+});
+
+/* ドラッグ移動 */
+function makeDraggable(win) {
+  const bar = win.querySelector("[data-drag]");
+  let dragging = false, ox = 0, oy = 0;
+  bar.addEventListener("mousedown", (e) => {
+    dragging = true;
+    ox = e.clientX - win.offsetLeft;
+    oy = e.clientY - win.offsetTop;
+    bringToFront(win);
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    win.style.left = Math.max(0, e.clientX - ox) + "px";
+    win.style.top = Math.max(0, e.clientY - oy) + "px";
+  });
+  document.addEventListener("mouseup", () => dragging = false);
+}
+makeDraggable(explorerWin);
+makeDraggable(appWin);
+
+/* ============================================================
+   アプリウィンドウ = 元の TIME-DRIVE CONSOLE パズル
+   ============================================================ */
+const appBody = document.getElementById("appBody");
+let appInitialized = false;
+
+function openApp() {
+  appWin.classList.add("show");
+  bringToFront(appWin);
+  if (!appInitialized) {
+    initApp();
+    appInitialized = true;
+  }
+}
+
+function initApp() {
+  appBody.innerHTML = `
+    <style>
+      .crt {
+        position: relative;
+        min-height: 100%;
+        background: radial-gradient(ellipse at 50% 0%, #0c1f18 0%, #04120c 70%, #020a07 100%);
+        color: #4dffb0;
+        padding: 22px 26px 26px;
+        overflow: hidden;
+        font-family: "Share Tech Mono", monospace;
+      }
+      .crt .titlebar {
+        display: flex; justify-content: space-between; align-items: baseline;
+        border-bottom: 1px solid #245c43; padding-bottom: 10px; margin-bottom: 16px;
+        font-family: "VT323", monospace;
+      }
+      .crt .titlebar .name { font-size: 21px; letter-spacing: 2px; }
+      .crt .titlebar .status { font-size: 14px; color: #ffcf4d; transition: color 0.3s; }
+      .crt .titlebar .status.locked { color: #4dffb0; }
+      .crt .line { font-size: 14px; line-height: 1.6; margin: 3px 0; color: #2fa876; }
+      .crt .panel { display: flex; gap: 22px; margin-top: 16px; align-items: flex-start; flex-wrap: wrap; }
+      .crt .params { flex: 0 0 auto; }
+      .crt .param-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+      .crt .param-row label { font-size: 13px; color: #6fd6ab; width: 140px; }
+      .crt .group-label { font-size: 11px; letter-spacing: 2px; color: #ffcf4d; margin: 0 0 6px 2px; }
+      .crt .param-row input {
+        background: transparent; border: none; border-bottom: 2px solid #4dffb0;
+        color: #baffe0; font-family: "VT323", monospace; font-size: 24px; letter-spacing: 8px;
+        width: 64px; padding: 2px; outline: none; text-align: center;
+        text-shadow: 0 0 8px rgba(77,255,176,0.6);
+      }
+      .crt .param-row input::placeholder { color: #1f4d3a; letter-spacing: 6px; }
+      .crt .scope-wrap { flex: 1; min-width: 220px; }
+      .crt canvas#scope { width: 100%; height: 90px; background: #01100a; border: 1px solid #1f4d3a; border-radius: 4px; display: block; }
+      .crt .sync-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+      .crt .sync-label { font-size: 13px; color: #6fd6ab; white-space: nowrap; }
+      .crt .gauge { flex: 1; height: 13px; background: #0a1e16; border: 1px solid #1f4d3a; border-radius: 8px; overflow: hidden; position: relative; }
+      .crt .gauge-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #ff5a5a, #ffcf4d, #4dffb0); transition: width 0.15s linear; }
+      .crt .sync-pct { font-family: "VT323", monospace; font-size: 18px; width: 54px; text-align: right; color: #baffe0; }
+      .crt .statusline { margin-top: 12px; font-size: 14px; min-height: 20px; color: #ffcf4d; transition: color 0.3s; }
+      .crt .statusline.locked { color: #4dffb0; }
+      .crt .statusline.hint { color: #ff9a4d; }
+      .crt .btnrow { margin-top: 16px; }
+      .crt button#go {
+        background: #0c2b1f; border: 1px solid #245c43; color: #245c43;
+        font-family: "VT323", monospace; font-size: 19px; letter-spacing: 3px;
+        padding: 8px 22px; cursor: not-allowed; border-radius: 3px; transition: all 0.3s;
+      }
+      .crt button#go.ready {
+        border-color: #4dffb0; color: #baffe0; cursor: pointer;
+        box-shadow: 0 0 16px rgba(77,255,176,0.5); animation: appPulse 1.4s ease-in-out infinite;
+      }
+      .crt button#go.ready:hover { background: #143d2b; }
+      @keyframes appPulse {
+        0%, 100% { box-shadow: 0 0 10px rgba(77,255,176,0.35); }
+        50% { box-shadow: 0 0 22px rgba(77,255,176,0.75); }
+      }
+      .crt .success {
+        position: absolute; inset: 0; background: #020a07; display: none;
+        align-items: center; justify-content: center; flex-direction: column; text-align: center; z-index: 5;
+      }
+      .crt .success.show { display: flex; }
+      .crt .ring {
+        width: 130px; height: 130px; border-radius: 50%;
+        background: conic-gradient(from 0deg, #4dffb0, #0c2b1f, #4dffb0, #ffcf4d, #4dffb0);
+        animation: appSpin 2.4s linear infinite;
+        -webkit-mask: radial-gradient(circle, transparent 40%, black 42%, black 96%, transparent 98%);
+                mask: radial-gradient(circle, transparent 40%, black 42%, black 96%, transparent 98%);
+        box-shadow: 0 0 40px rgba(77,255,176,0.6); margin-bottom: 18px;
+      }
+      @keyframes appSpin { to { transform: rotate(360deg); } }
+      .crt .success h2 { font-family: "VT323", monospace; font-size: 28px; letter-spacing: 4px; color: #baffe0; margin: 0 0 8px; text-shadow: 0 0 12px rgba(77,255,176,0.7); }
+      .crt .success p { font-size: 14px; color: #4dffb0; margin: 3px 0; }
+      .crt .countdown { font-family: "VT323", monospace; font-size: 40px; color: #ffcf4d; margin-top: 10px; text-shadow: 0 0 14px rgba(255,207,77,0.7); }
+    </style>
+    <div class="crt" id="crtApp">
+      <div class="titlebar">
+        <span class="name">TIME-DRIVE CONSOLE v0.9β</span>
+        <span class="status" id="statusLamp">● UNSYNCED</span>
+      </div>
+      <div class="line">&gt; もつれ同調パラメータ（①〜④）を入力し、共鳴波形をロックせよ。</div>
+      <div class="line">&gt; 正しい4値でなければ、装置は同期しない（起動ボタンは押せない）。</div>
+      <div class="panel">
+        <div class="params">
+          <div class="group-label">ペア①（最強）</div>
+          <div class="param-row"><label>① ノードID（小）</label><input id="idA" type="text" inputmode="numeric" maxlength="2" placeholder="__"></div>
+          <div class="param-row"><label>② ノードID（大）</label><input id="idB" type="text" inputmode="numeric" maxlength="2" placeholder="__"></div>
+          <div class="group-label">ペア②（次点）</div>
+          <div class="param-row"><label>③ ノードID（小）</label><input id="idC" type="text" inputmode="numeric" maxlength="2" placeholder="__"></div>
+          <div class="param-row"><label>④ ノードID（大）</label><input id="idD" type="text" inputmode="numeric" maxlength="2" placeholder="__"></div>
+        </div>
+        <div class="scope-wrap">
+          <canvas id="scope" width="440" height="90"></canvas>
+          <div class="sync-row">
+            <span class="sync-label">同調率</span>
+            <div class="gauge"><div class="gauge-fill" id="gaugeFill"></div></div>
+            <span class="sync-pct" id="syncPct">0%</span>
+          </div>
+        </div>
+      </div>
+      <div class="statusline" id="statusline">波形が乱れている。パラメータを調整せよ。</div>
+      <div class="btnrow"><button id="go" disabled>起動 / EXECUTE</button></div>
+      <div class="success" id="success">
+        <div class="ring"></div>
+        <h2>起動成功</h2>
+        <p>ENTANGLEMENT LINK ESTABLISHED.</p>
+        <p>TIME-DRIVE ONLINE.</p>
+        <div class="countdown" id="countdown">3</div>
+      </div>
+    </div>
+  `;
+
+  const idA = appBody.querySelector("#idA");
+  const idB = appBody.querySelector("#idB");
+  const idC = appBody.querySelector("#idC");
+  const idD = appBody.querySelector("#idD");
+  const go = appBody.querySelector("#go");
+  const statusLamp = appBody.querySelector("#statusLamp");
+  const statusline = appBody.querySelector("#statusline");
+  const gaugeFill = appBody.querySelector("#gaugeFill");
+  const syncPct = appBody.querySelector("#syncPct");
+  const successEl = appBody.querySelector("#success");
+  const countdownEl = appBody.querySelector("#countdown");
+  const canvas = appBody.querySelector("#scope");
+  const ctx = canvas.getContext("2d");
+
+  let sync = 0, launched = false, recalcCount = 0, t = 0;
+
+  function sanitize(el) { el.value = el.value.replace(/[^0-9]/g, "").slice(0, 2); }
+  [idA, idB, idC, idD].forEach(el => el.addEventListener("input", () => { sanitize(el); recompute(); }));
+
+  function recompute() {
+    if (launched) return;
+    const a = idA.value.length ? parseInt(idA.value, 10) : null;
+    const b = idB.value.length ? parseInt(idB.value, 10) : null;
+    const c = idC.value.length ? parseInt(idC.value, 10) : null;
+    const d = idD.value.length ? parseInt(idD.value, 10) : null;
+    const allFilled = a !== null && b !== null && c !== null && d !== null;
+    if (!allFilled) {
+      sync = 0;
+    } else {
+      const err = Math.abs(a - TARGET_A) + Math.abs(b - TARGET_B) + Math.abs(c - TARGET_C) + Math.abs(d - TARGET_D);
+      sync = Math.max(0, 100 - err * 4);
+      recalcCount++;
+    }
+    updateGauge();
+    updateStatus(allFilled);
+  }
+
+  function updateGauge() {
+    gaugeFill.style.width = sync + "%";
+    syncPct.textContent = Math.round(sync) + "%";
+  }
+
+  function updateStatus(allFilled) {
+    if (sync >= 100) {
+      statusLamp.textContent = "● LOCKED";
+      statusLamp.classList.add("locked");
+      statusline.textContent = "共鳴波形がロックされた。起動可能。";
+      statusline.className = "statusline locked";
+      go.disabled = false;
+      go.classList.add("ready");
+    } else {
+      statusLamp.textContent = "● UNSYNCED";
+      statusLamp.classList.remove("locked");
+      go.disabled = true;
+      go.classList.remove("ready");
+      if (!allFilled) {
+        statusline.textContent = "波形が乱れている。①〜④すべてのパラメータを入力せよ。";
+        statusline.className = "statusline";
+      } else if (sync > 40) {
+        statusline.textContent = "同調が近づいている……わずかにズレている。";
+        statusline.className = "statusline";
+      } else {
+        statusline.textContent = "同調率が低すぎる。値が大きく外れている。";
+        statusline.className = "statusline";
+      }
+      if (recalcCount >= 6 && sync < 100) {
+        statusline.textContent += "　［ヒント：もつれ相関ログ（表2）で｜r｜＞0.9のペアを2組探せ］";
+        statusline.className = "statusline hint";
+      }
+    }
+  }
+
+  go.addEventListener("click", () => {
+    if (go.disabled) return;
+    launch();
+  });
+
+  function launch() {
+    launched = true;
+    successEl.classList.add("show");
+    let n = 3;
+    countdownEl.textContent = n;
+    const timer = setInterval(() => {
+      n--;
+      if (n <= 0) {
+        countdownEl.textContent = "GO";
+        clearInterval(timer);
+      } else {
+        countdownEl.textContent = n;
+      }
+    }, 900);
+  }
+
+  function drawScope() {
+    if (!appWin.classList.contains("show")) { requestAnimationFrame(drawScope); return; }
+    t += 0.06;
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = "rgba(36,92,67,0.4)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
+    const noise = (100 - sync) / 100;
+    const hue = sync >= 100 ? "#4dffb0" : sync > 40 ? "#ffcf4d" : "#ff5a5a";
+    ctx.strokeStyle = hue;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = hue;
+    ctx.shadowBlur = sync >= 100 ? 10 : 3;
+    ctx.beginPath();
+    for (let x = 0; x <= w; x += 4) {
+      const base = Math.sin((x * 0.04) + t * (1 + noise * 2)) * (h * 0.28);
+      const jitter = (Math.random() - 0.5) * noise * h * 0.55;
+      const y = h / 2 + base + jitter;
+      if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    requestAnimationFrame(drawScope);
+  }
+  requestAnimationFrame(drawScope);
+}
+</script>
+</body>
+</html>
