@@ -1242,7 +1242,25 @@ function initApp() {
       @keyframes appSpin { to { transform: rotate(360deg); } }
       .crt .success h2 { font-family: "VT323", monospace; font-size: 28px; letter-spacing: 4px; color: #baffe0; margin: 0 0 8px; text-shadow: 0 0 12px rgba(77,255,176,0.7); }
       .crt .success p { font-size: 14px; color: #4dffb0; margin: 3px 0; }
-      .crt .countdown { font-family: "VT323", monospace; font-size: 40px; color: #ffcf4d; margin-top: 10px; text-shadow: 0 0 14px rgba(255,207,77,0.7); }
+      .crt .countdown { font-family: "VT323", monospace; font-size: 22px; color: #ffcf4d; margin-top: 14px; text-shadow: 0 0 14px rgba(255,207,77,0.7); }
+      .crt .countdown .num { font-size: 40px; }
+      .crt button#goFinalBtn {
+        display: none;
+        margin-top: 16px;
+        background: #143d2b;
+        border: 1px solid #4dffb0;
+        color: #baffe0;
+        font-family: "VT323", monospace;
+        font-size: 30px;
+        letter-spacing: 6px;
+        padding: 10px 40px;
+        border-radius: 4px;
+        cursor: pointer;
+        box-shadow: 0 0 18px rgba(77,255,176,0.5);
+        animation: appPulse 1.4s ease-in-out infinite;
+      }
+      .crt button#goFinalBtn.show { display: inline-block; }
+      .crt button#goFinalBtn:hover { background: #1c5a3f; }
     </style>
     <div class="crt" id="crtApp">
       <div class="titlebar">
@@ -1276,7 +1294,8 @@ function initApp() {
         <h2>起動成功</h2>
         <p>ENTANGLEMENT LINK ESTABLISHED.</p>
         <p>TIME-DRIVE ONLINE.</p>
-        <div class="countdown" id="countdown">3</div>
+        <div class="countdown" id="countdown">移動開始可能まで残り <span class="num" id="countdownNum">5:00</span></div>
+        <button id="goFinalBtn">GO</button>
       </div>
     </div>
   `;
@@ -1292,6 +1311,8 @@ function initApp() {
   const syncPct = appBody.querySelector("#syncPct");
   const successEl = appBody.querySelector("#success");
   const countdownEl = appBody.querySelector("#countdown");
+  const countdownNum = appBody.querySelector("#countdownNum");
+  const goFinalBtn = appBody.querySelector("#goFinalBtn");
   const canvas = appBody.querySelector("#scope");
   const ctx = canvas.getContext("2d");
 
@@ -1361,18 +1382,33 @@ function initApp() {
   function launch() {
     launched = true;
     successEl.classList.add("show");
-    let n = 3;
-    countdownEl.textContent = n;
+    countdownEl.style.display = "block";
+    goFinalBtn.classList.remove("show");
+
+    let remaining = 5 * 60; // 移動開始可能まで5分
+    updateCountdownDisplay(remaining);
     const timer = setInterval(() => {
-      n--;
-      if (n <= 0) {
-        countdownEl.textContent = "GO";
+      remaining--;
+      if (remaining <= 0) {
         clearInterval(timer);
+        countdownEl.style.display = "none";
+        goFinalBtn.classList.add("show");
       } else {
-        countdownEl.textContent = n;
+        updateCountdownDisplay(remaining);
       }
-    }, 900);
+    }, 1000);
   }
+
+  function updateCountdownDisplay(totalSeconds) {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    countdownNum.textContent = m + ":" + String(s).padStart(2, "0");
+  }
+
+  goFinalBtn.addEventListener("click", () => {
+    goFinalBtn.textContent = "出発しました";
+    goFinalBtn.disabled = true;
+  });
 
   function drawScope() {
     if (!appWin.classList.contains("show")) { requestAnimationFrame(drawScope); return; }
