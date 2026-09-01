@@ -42,7 +42,7 @@
     cursor: default;
   }
   #screenOff.flash {
-    animation: monitorFlash 0.7s ease-out;
+    animation: monitorFlash 1.4s ease-out;
   }
   @keyframes monitorFlash {
     0%   { background: #000; }
@@ -613,12 +613,43 @@ const FLASH_COMMAND_LINES = [
   "bypassing local lock ...",
   "access granted.",
 ];
+const FLASH_DURATION_MS = 1400; // 元の700msの2倍
 let flashTimer = null;
+
+// ブラウザの自動再生制限を回避するため、「開始」ボタン押下(=実際のユーザー操作)の
+// タイミングでAudioContextを生成/再開しておく。以後はプログラムから鳴らせる。
+let audioCtx = null;
+function unlockAudio() {
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } else if (audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+  } catch (e) {}
+}
+
+function playFlashSound() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(220, now);
+  osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.15, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(now);
+  osc.stop(now + 0.32);
+}
 
 function doFlash() {
   if (state !== "off") return;
   if (flashTimer) clearInterval(flashTimer);
 
+  playFlashSound();
   screenOff.classList.add("flash");
   flashText.textContent = "";
   let i = 0;
@@ -630,19 +661,20 @@ function doFlash() {
       clearInterval(flashTimer);
       flashTimer = null;
     }
-  }, 120);
+  }, 240);
 
   setTimeout(() => {
     if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
     screenOff.classList.remove("flash");
     flashText.textContent = "";
-  }, 700);
+  }, FLASH_DURATION_MS);
 }
 
 startBtn.addEventListener("click", hidePairing);
 function hidePairing() {
   state = "off";
   pairing.style.display = "none";
+  unlockAudio();
 }
 
 /* ============================================================
