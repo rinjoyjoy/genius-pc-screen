@@ -512,8 +512,16 @@ let connectedCount = 0;
 const shortCode = Math.floor(1000 + Math.random() * 9000);
 const peerId = "tdc-" + shortCode;
 
+// STUNだけでは越えられないNAT/AP分離環境でも繋がるよう、公開TURN中継(Metered Open Relay)を併用する
+const ICE_SERVERS = [
+  { urls: "stun:stun.relay.metered.ca:80" },
+  { urls: "turn:global.relay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:global.relay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:global.relay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+];
+
 try {
-  const peer = new Peer(peerId);
+  const peer = new Peer(peerId, { config: { iceServers: ICE_SERVERS } });
   peer.on("open", (id) => {
     pairCode.textContent = id;
     const remoteUrl = REMOTE_BASE_URL + "/?id=" + encodeURIComponent(id);
@@ -522,9 +530,12 @@ try {
     }
   });
   peer.on("connection", (conn) => {
-    connectedCount++;
-    pairStatus.textContent = "接続済み: " + connectedCount + "台";
-    pairStatus.classList.add("ok");
+    pairStatus.textContent = "接続処理中...";
+    conn.on("open", () => {
+      connectedCount++;
+      pairStatus.textContent = "接続済み: " + connectedCount + "台";
+      pairStatus.classList.add("ok");
+    });
     conn.on("data", (data) => {
       if (data === "flash") doFlash();
     });
@@ -533,9 +544,13 @@ try {
       pairStatus.textContent = connectedCount > 0 ? ("接続済み: " + connectedCount + "台") : "スマホ側の待受中...";
       if (connectedCount === 0) pairStatus.classList.remove("ok");
     });
+    conn.on("error", () => {
+      pairStatus.textContent = "データ接続エラー(通信環境を確認)";
+      pairStatus.classList.remove("ok");
+    });
   });
-  peer.on("error", () => {
-    pairStatus.textContent = "接続エラー(ネットワークを確認)";
+  peer.on("error", (err) => {
+    pairStatus.textContent = "接続エラー: " + (err && err.type ? err.type : "unknown");
   });
 } catch (e) {
   pairStatus.textContent = "リモート機能を初期化できませんでした";
