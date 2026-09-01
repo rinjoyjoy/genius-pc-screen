@@ -53,6 +53,21 @@
     100% { background: #000; }
   }
 
+  #flashText {
+    position: absolute;
+    left: 5%;
+    top: 12%;
+    color: #4dffb0;
+    font-family: "Share Tech Mono", monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre;
+    text-shadow: 0 0 6px rgba(77,255,176,0.8);
+    opacity: 0;
+    pointer-events: none;
+  }
+  #screenOff.flash #flashText { opacity: 1; }
+
   .pairing {
     background: #05100a;
     border: 1px solid #245c43;
@@ -376,6 +391,7 @@
 
 <!-- ============== OFF / セットアップ ============== -->
 <div class="screen active" id="screenOff">
+  <div id="flashText"></div>
   <div class="pairing" id="pairing">
     <h2>&gt; REMOTE LINK</h2>
     <div class="pstatus" id="pairStatus">バックエンド接続確認中...</div>
@@ -527,10 +543,37 @@ async function pollBackend() {
 pollBackend();
 setInterval(pollBackend, POLL_INTERVAL_MS);
 
+const flashText = document.getElementById("flashText");
+const FLASH_COMMAND_LINES = [
+  "root@core:~$ sudo override --force",
+  "authenticating remote session ...",
+  "bypassing local lock ...",
+  "access granted.",
+];
+let flashTimer = null;
+
 function doFlash() {
   if (state !== "off") return;
+  if (flashTimer) clearInterval(flashTimer);
+
   screenOff.classList.add("flash");
-  setTimeout(() => screenOff.classList.remove("flash"), 700);
+  flashText.textContent = "";
+  let i = 0;
+  flashTimer = setInterval(() => {
+    if (i < FLASH_COMMAND_LINES.length) {
+      flashText.textContent += FLASH_COMMAND_LINES[i] + "\n";
+      i++;
+    } else {
+      clearInterval(flashTimer);
+      flashTimer = null;
+    }
+  }, 120);
+
+  setTimeout(() => {
+    if (flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+    screenOff.classList.remove("flash");
+    flashText.textContent = "";
+  }, 700);
 }
 
 startBtn.addEventListener("click", hidePairing);
