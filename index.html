@@ -6,8 +6,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1/build/qrcode.min.js"></script>
 <style>
   /* =========================================================
      CONFIG は script 内の CONFIG セクションを参照。
@@ -70,14 +68,6 @@
     color: #6fd6ab;
     margin: 0 0 14px;
     font-weight: normal;
-  }
-  .pairing canvas { background: #fff; padding: 8px; border-radius: 6px; }
-  .pairing .code {
-    margin-top: 12px;
-    font-family: "VT323", monospace;
-    font-size: 26px;
-    letter-spacing: 4px;
-    color: #ffcf4d;
   }
   .pairing .pstatus {
     margin-top: 8px;
@@ -387,12 +377,10 @@
 <!-- ============== OFF / セットアップ ============== -->
 <div class="screen active" id="screenOff">
   <div class="pairing" id="pairing">
-    <h2>&gt; REMOTE PAIRING</h2>
-    <canvas id="qrCanvas" width="180" height="180"></canvas>
-    <div class="code" id="pairCode">-- -- -- --</div>
-    <div class="pstatus" id="pairStatus">スマホ側の待受中...</div>
+    <h2>&gt; REMOTE LINK</h2>
+    <div class="pstatus" id="pairStatus">バックエンド接続確認中...</div>
     <button id="startBtn">開始(黒画面にする)</button>
-    <div class="note">スマホで remote.html を開くか QR を読み取り、<br>接続後この画面は非表示になります。<br>非表示中は H キーで再表示できます。</div>
+    <div class="note">リモコン側と同じスプレッドシート連携が有効になっているか確認しています。<br>開始後この画面は非表示になります。<br>非表示中は H キーで再表示できます。</div>
   </div>
 </div>
 <div id="offHint">ENTER で起動</div>
@@ -477,9 +465,10 @@ const TARGET_B = 17;               // パズル ペア①(大) 正解
 const TARGET_C = 51;               // パズル ペア②(小) 正解
 const TARGET_D = 63;               // パズル ペア②(大) 正解
 
-// リモコン(genius-pc-remote)をVercel等にデプロイした後のURLをここに設定する
-// 例: "https://genius-pc-remote.vercel.app"
-const REMOTE_BASE_URL = "https://genius-pc-remote.vercel.app";
+// Google Apps Script (スプレッドシート連携)のWebアプリURL。
+// genius-pc-remote 側の index.html と同じURLを設定すること。
+const BACKEND_URL = "https://script.google.com/macros/s/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/exec";
+const POLL_INTERVAL_MS = 1500;
 
 /* ============================================================
    状態管理
@@ -498,74 +487,45 @@ function showScreen(name) {
 }
 
 /* ============================================================
-   ペアリング (PeerJS) - スマホから「一瞬点灯」を受信
+   バックエンド連携 (スプレッドシート/Google Apps Script)
+   スマホがシートに書き込んだ「flash」命令をポーリングで検知する
    ============================================================ */
 const pairing = document.getElementById("pairing");
-const pairCode = document.getElementById("pairCode");
 const pairStatus = document.getElementById("pairStatus");
-const qrCanvas = document.getElementById("qrCanvas");
 const startBtn = document.getElementById("startBtn");
 const offHint = document.getElementById("offHint");
 const screenOff = document.getElementById("screenOff");
 
-const activeConns = new Set();
-function refreshPairStatus() {
-  const n = activeConns.size;
-  pairStatus.textContent = n > 0 ? ("接続済み: " + n + "台") : "スマホ側の待受中...";
-  pairStatus.classList.toggle("ok", n > 0);
-}
-function dropConn(conn) {
-  if (activeConns.delete(conn)) refreshPairStatus();
-}
+let lastSeenTs = null; // 起動前からあった古い命令で誤発火しないよう、初回ポーリングの値を基準にする
 
-const shortCode = Math.floor(1000 + Math.random() * 9000);
-const peerId = "tdc-" + shortCode;
+async function pollBackend() {
+  try {
+    const res = await fetch(BACKEND_URL + "?action=poll", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
 
-// STUNだけでは越えられないNAT/AP分離環境でも繋がるよう、公開TURN中継(Metered Open Relay)を併用する
-const ICE_SERVERS = [
-  { urls: "stun:stun.relay.metered.ca:80" },
-  { urls: "turn:global.relay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:global.relay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:global.relay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-];
-
-try {
-  const peer = new Peer(peerId, { config: { iceServers: ICE_SERVERS } });
-  peer.on("open", (id) => {
-    pairCode.textContent = id;
-    const remoteUrl = REMOTE_BASE_URL + "/?id=" + encodeURIComponent(id);
-    if (window.QRCode) {
-      QRCode.toCanvas(qrCanvas, remoteUrl, { width: 180, margin: 1 }, () => {});
+    if (lastSeenTs === null) {
+      // 初回はここまでの命令を既読扱いにするだけ(接続確認)
+      lastSeenTs = data.ts || 0;
+      pairStatus.textContent = "接続OK";
+      pairStatus.classList.add("ok");
+      return;
     }
-  });
-  peer.on("connection", (conn) => {
-    pairStatus.textContent = "接続処理中...";
-    conn.on("open", () => {
-      activeConns.add(conn);
-      refreshPairStatus();
-      // PeerJSの'close'は、相手がタブを閉じる/電波切れ等で正常に切断しなかった場合
-      // 発火しないことがあるため、WebRTC自体の接続状態も監視して確実に除外する
-      const pc = conn.peerConnection;
-      if (pc) {
-        pc.addEventListener("connectionstatechange", () => {
-          if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
-            dropConn(conn);
-          }
-        });
-      }
-    });
-    conn.on("data", (data) => {
-      if (data === "flash") doFlash();
-    });
-    conn.on("close", () => dropConn(conn));
-    conn.on("error", () => dropConn(conn));
-  });
-  peer.on("error", (err) => {
-    pairStatus.textContent = "接続エラー: " + (err && err.type ? err.type : "unknown");
-  });
-} catch (e) {
-  pairStatus.textContent = "リモート機能を初期化できませんでした";
+
+    if (data.ts && data.ts > lastSeenTs) {
+      lastSeenTs = data.ts;
+      if (data.command === "flash") doFlash();
+    }
+
+    pairStatus.textContent = "接続OK";
+    pairStatus.classList.add("ok");
+  } catch (e) {
+    pairStatus.textContent = "バックエンド接続エラー";
+    pairStatus.classList.remove("ok");
+  }
 }
+pollBackend();
+setInterval(pollBackend, POLL_INTERVAL_MS);
 
 function doFlash() {
   if (state !== "off") return;
