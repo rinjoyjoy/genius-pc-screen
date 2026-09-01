@@ -217,13 +217,24 @@
   }
   @keyframes unlockIn { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-  .desktopArea { flex: 1; position: relative; padding: 18px; }
+  .desktopArea {
+    flex: 1;
+    position: relative;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 2px;
+  }
 
   .icon {
     width: 84px;
+    height: 84px;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 6px;
     color: #fff;
     font-size: 12px;
@@ -233,6 +244,12 @@
     user-select: none;
     padding: 6px;
     border-radius: 4px;
+  }
+  .icon span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .icon:hover { background: rgba(255,255,255,0.08); }
   .icon .glyph {
@@ -355,7 +372,45 @@
     font-size: 14px;
     cursor: default;
   }
-  #taskClock { margin-left: auto; font-size: 12px; opacity: 0.9; }
+  .taskSearch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    color: rgba(255,255,255,0.8);
+    width: 200px;
+    cursor: default;
+  }
+  .taskPinned { display: flex; align-items: center; gap: 2px; }
+  .taskApp {
+    width: 32px; height: 32px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    cursor: default;
+  }
+  .taskApp:hover { background: rgba(255,255,255,0.12); }
+  .taskTray {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    opacity: 0.9;
+    margin-left: auto;
+    padding: 0 6px;
+  }
+  .taskClockWrap {
+    text-align: right;
+    line-height: 1.3;
+    cursor: default;
+    padding: 4px 8px;
+    border-radius: 3px;
+  }
+  .taskClockWrap:hover { background: rgba(255,255,255,0.1); }
+  #taskDate { font-size: 10.5px; opacity: 0.85; }
 
   /* windows */
   .winbox {
@@ -438,7 +493,31 @@
 
   /* app window (元のパズル画面) */
   #appWin { width: 720px; height: 560px; left: 260px; top: 60px; }
-  #appWin .winbody { background: #05070a; padding: 0; }
+  #appWin .winbody { background: #05070a; padding: 0; position: relative; overflow: hidden; }
+  #appBody { position: absolute; inset: 0; overflow: auto; }
+  .appLoading {
+    position: absolute;
+    inset: 0;
+    background: #05070a;
+    color: #4dffb0;
+    font-family: "Share Tech Mono", monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    padding: 26px;
+    white-space: pre-wrap;
+    z-index: 5;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+  }
+  .appLoading.show { opacity: 1; }
+  .appLoading .cur {
+    display: inline-block;
+    width: 8px; height: 14px;
+    background: #4dffb0;
+    vertical-align: middle;
+    animation: blink 1s step-end infinite;
+  }
 </style>
 </head>
 <body>
@@ -480,17 +559,29 @@
       <div class="glyph"><div class="folderIcon"></div></div>
       <span>PC</span>
     </div>
-    <div class="icon" id="iconBin" style="position:absolute; top:110px; left:0;">
+    <div class="icon" id="iconBin">
       <div class="glyph"><div class="binIcon"></div></div>
       <span>ゴミ箱</span>
     </div>
-    <div class="icon" id="iconDeskFolder" style="position:absolute; top:0; left:96px;">
+    <div class="icon" id="iconDeskFolder">
       <div class="glyph"><div class="folderIcon"></div></div>
       <span>資料</span>
     </div>
-    <div class="icon" id="iconDeskNote" style="position:absolute; top:110px; left:96px;">
+    <div class="icon" id="iconDeskNote">
       <div class="glyph"><div class="fileIconG" data-ext="TXT" style="--ext-color:#6b6b6b;"></div></div>
       <span>メモ</span>
+    </div>
+    <div class="icon" id="iconDeskReport">
+      <div class="glyph"><div class="fileIconG" data-ext="DOCX" style="--ext-color:#2b579a;"></div></div>
+      <span>報告書_下書き</span>
+    </div>
+    <div class="icon" id="iconDeskPhoto">
+      <div class="glyph"><div class="fileIconG" data-ext="PNG" style="--ext-color:#8a4fd6;"></div></div>
+      <span>写真</span>
+    </div>
+    <div class="icon" id="iconDeskOld">
+      <div class="glyph"><div class="folderIcon"></div></div>
+      <span>旧バックアップ</span>
     </div>
 
     <!-- エクスプローラ -->
@@ -524,12 +615,27 @@
         <div class="winbtn min"></div>
         <div class="winbtn close" id="appClose"></div>
       </div>
-      <div class="winbody" id="appBody"></div>
+      <div class="winbody">
+        <div class="appLoading" id="appLoading"><div id="appLoadingLines"></div></div>
+        <div id="appBody"></div>
+      </div>
     </div>
   </div>
   <div id="taskbar">
-    <div class="startBtn">⊞</div>
-    <div id="taskClock">00:00</div>
+    <div class="startBtn" id="taskStartBtn">⊞</div>
+    <div class="taskSearch" id="taskSearch"><span>🔍</span><span>ここに入力して検索</span></div>
+    <div class="taskPinned">
+      <div class="taskApp" id="taskAppExplorer">📁</div>
+      <div class="taskApp" id="taskAppBrowser">🌐</div>
+      <div class="taskApp" id="taskAppMail">✉️</div>
+    </div>
+    <div class="taskTray">
+      <span>📶</span><span>🔊</span><span>🔋</span>
+      <div class="taskClockWrap" id="taskClockWrap">
+        <div id="taskClock">00:00</div>
+        <div id="taskDate">--/--</div>
+      </div>
+    </div>
   </div>
   <div class="toast" id="toast"></div>
 </div>
@@ -699,7 +805,11 @@ document.addEventListener("keydown", (e) => {
     lockPassBox.classList.add("show");
     lockPressHint.style.display = "none";
     lockPass.focus();
+    resetLockIdleTimer();
     return;
+  }
+  if (state === "lock-pass") {
+    resetLockIdleTimer();
   }
 });
 
@@ -753,7 +863,9 @@ function updateClock() {
   lockClock.textContent = hh + ":" + mm;
   lockDate.textContent = now.getFullYear() + "年" + (now.getMonth()+1) + "月" + now.getDate() + "日";
   const taskClock = document.getElementById("taskClock");
+  const taskDate = document.getElementById("taskDate");
   if (taskClock) taskClock.textContent = hh + ":" + mm;
+  if (taskDate) taskDate.textContent = (now.getMonth()+1) + "/" + now.getDate();
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -767,11 +879,32 @@ function enterLock() {
   showScreen("lock");
 }
 
+// パスワード入力画面で5秒操作がなければ、黒画面(off)に戻す
+const LOCK_IDLE_TIMEOUT_MS = 5000;
+let lockIdleTimer = null;
+function resetLockIdleTimer() {
+  clearTimeout(lockIdleTimer);
+  lockIdleTimer = setTimeout(revertToOffFromLock, LOCK_IDLE_TIMEOUT_MS);
+}
+function revertToOffFromLock() {
+  clearTimeout(lockIdleTimer);
+  lockPassBox.classList.remove("show");
+  lockPressHint.style.display = "block";
+  lockPass.value = "";
+  lockError.textContent = "";
+  state = "off";
+  showScreen("off");
+}
+
 lockPass.addEventListener("keydown", (e) => {
   if (e.key === "Enter") checkPassword();
 });
+lockPass.addEventListener("input", () => {
+  if (state === "lock-pass") resetLockIdleTimer();
+});
 function checkPassword() {
   if (lockPass.value === LOCK_PASSWORD) {
+    clearTimeout(lockIdleTimer);
     enterDesktop();
   } else {
     lockError.textContent = "パスワードが正しくありません";
@@ -816,13 +949,17 @@ const FOLDER_CONTENTS = {
       { type: "app", name: "time_drive_console", ext: "EXE", color: "#2fa876" },
       { type: "file", name: "実験ログ_0830", ext: "TXT", color: "#6b6b6b" },
       { type: "file", name: "被験体観測記録", ext: "DOCX", color: "#2b579a" },
+      { type: "file", name: "解析結果_v3", ext: "XLSX", color: "#1e7145" },
+      { type: "file", name: "観測写真_09", ext: "PNG", color: "#8a4fd6" },
     ],
   },
   pc: {
     label: "PC",
     items: [
       { type: "folder", name: "ローカルディスク (C:)" },
+      { type: "folder", name: "データ (D:)" },
       { type: "folder", name: "リムーバブルディスク (E:)" },
+      { type: "folder", name: "ネットワークドライブ (Z:)" },
     ],
   },
   desktop: {
@@ -830,6 +967,9 @@ const FOLDER_CONTENTS = {
     items: [
       { type: "folder", name: "資料" },
       { type: "file", name: "メモ", ext: "TXT", color: "#6b6b6b" },
+      { type: "file", name: "報告書_下書き", ext: "DOCX", color: "#2b579a" },
+      { type: "file", name: "写真", ext: "PNG", color: "#8a4fd6" },
+      { type: "folder", name: "旧バックアップ" },
     ],
   },
   documents: {
@@ -839,7 +979,11 @@ const FOLDER_CONTENTS = {
       { type: "file", name: "実験計画書", ext: "DOCX", color: "#2b579a" },
       { type: "file", name: "予算表", ext: "XLSX", color: "#1e7145" },
       { type: "file", name: "スクリーンショット_2026-08", ext: "PNG", color: "#8a4fd6" },
+      { type: "file", name: "議事録_0812", ext: "DOCX", color: "#2b579a" },
+      { type: "file", name: "契約書_確認用", ext: "PDF", color: "#c0392b" },
+      { type: "file", name: "解析ノート", ext: "TXT", color: "#6b6b6b" },
       { type: "folder", name: "過去ログ" },
+      { type: "folder", name: "バックアップ" },
     ],
   },
   downloads: {
@@ -847,6 +991,8 @@ const FOLDER_CONTENTS = {
     items: [
       { type: "file", name: "setup", ext: "ZIP", color: "#b8860b" },
       { type: "file", name: "readme", ext: "TXT", color: "#6b6b6b" },
+      { type: "file", name: "driver_update", ext: "EXE", color: "#555" },
+      { type: "file", name: "invoice_0825", ext: "PDF", color: "#c0392b" },
     ],
   },
 };
@@ -927,9 +1073,24 @@ appClose.addEventListener("click", () => appWin.classList.remove("show"));
 const iconBin = document.getElementById("iconBin");
 const iconDeskFolder = document.getElementById("iconDeskFolder");
 const iconDeskNote = document.getElementById("iconDeskNote");
+const iconDeskReport = document.getElementById("iconDeskReport");
+const iconDeskPhoto = document.getElementById("iconDeskPhoto");
+const iconDeskOld = document.getElementById("iconDeskOld");
 iconBin.addEventListener("dblclick", () => showToast("ごみ箱は空です"));
 iconDeskFolder.addEventListener("dblclick", () => showToast("このフォルダーにアクセスする権限がありません"));
 iconDeskNote.addEventListener("dblclick", () => showToast("このファイルを開けません"));
+iconDeskReport.addEventListener("dblclick", () => showToast("このファイルを開けません"));
+iconDeskPhoto.addEventListener("dblclick", () => showToast("このファイルを開けません"));
+iconDeskOld.addEventListener("dblclick", () => showToast("このフォルダーにアクセスする権限がありません"));
+
+document.getElementById("taskAppExplorer").addEventListener("click", () => {
+  explorerWin.classList.add("show");
+  bringToFront(explorerWin);
+});
+document.getElementById("taskAppBrowser").addEventListener("click", () => showToast("インターネットに接続されていません"));
+document.getElementById("taskAppMail").addEventListener("click", () => showToast("メールを送受信できません"));
+document.getElementById("taskSearch").addEventListener("click", () => showToast("検索機能は現在利用できません"));
+document.getElementById("taskClockWrap").addEventListener("click", () => showToast("通知はありません"));
 
 function bringToFront(win) {
   document.querySelectorAll(".winbox").forEach(w => w.style.zIndex = 1);
@@ -963,7 +1124,16 @@ makeDraggable(appWin);
    アプリウィンドウ = 元の TIME-DRIVE CONSOLE パズル
    ============================================================ */
 const appBody = document.getElementById("appBody");
+const appLoading = document.getElementById("appLoading");
+const appLoadingLines = document.getElementById("appLoadingLines");
 let appInitialized = false;
+
+const APP_BOOT_LINES = [
+  "$ ./time_drive_console --launch",
+  "loading entangled node table ...",
+  "calibrating resonance scope ...",
+  "ready.",
+];
 
 function openApp() {
   appWin.classList.add("show");
@@ -972,6 +1142,30 @@ function openApp() {
     initApp();
     appInitialized = true;
   }
+  playAppBootAnimation();
+}
+
+let appBootTimer = null;
+function playAppBootAnimation() {
+  if (appBootTimer) clearInterval(appBootTimer);
+  appLoading.classList.add("show");
+  appLoadingLines.innerHTML = "";
+  let i = 0;
+  appBootTimer = setInterval(() => {
+    if (i < APP_BOOT_LINES.length) {
+      appLoadingLines.textContent += APP_BOOT_LINES[i] + "\n";
+      i++;
+    } else {
+      clearInterval(appBootTimer);
+      appBootTimer = null;
+      appLoadingLines.innerHTML += '<span class="cur"></span>';
+    }
+  }, 150);
+
+  setTimeout(() => {
+    if (appBootTimer) { clearInterval(appBootTimer); appBootTimer = null; }
+    appLoading.classList.remove("show");
+  }, 750);
 }
 
 function initApp() {
