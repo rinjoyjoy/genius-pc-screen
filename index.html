@@ -282,6 +282,60 @@
     font-family: monospace;
   }
 
+  /* 汎用ファイルアイコン(拡張子バッジ付き) */
+  .fileIconG {
+    width: 30px; height: 38px;
+    background: #fff;
+    border-radius: 2px;
+    position: relative;
+    box-shadow: 0 0 0 1px #c7ccd3;
+  }
+  .fileIconG::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 7px;
+    border-radius: 2px 2px 0 0;
+    background: var(--ext-color, #888);
+  }
+  .fileIconG::after {
+    content: attr(data-ext);
+    position: absolute;
+    left: 0; right: 0; bottom: 6px;
+    text-align: center;
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--ext-color, #888);
+  }
+
+  .expSectionLabel {
+    width: 100%;
+    font-size: 11px;
+    color: #8a93a0;
+    letter-spacing: 1px;
+    margin: 0 0 8px 2px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 64px;
+    transform: translateX(-50%) translateY(10px);
+    background: rgba(20,22,28,0.94);
+    color: #fff;
+    font-size: 12.5px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s, transform 0.25s;
+    z-index: 50;
+    white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
   #taskbar {
     height: 44px;
     background: rgba(10,20,35,0.85);
@@ -430,6 +484,14 @@
       <div class="glyph"><div class="binIcon"></div></div>
       <span>ゴミ箱</span>
     </div>
+    <div class="icon" id="iconDeskFolder" style="position:absolute; top:0; left:96px;">
+      <div class="glyph"><div class="folderIcon"></div></div>
+      <span>資料</span>
+    </div>
+    <div class="icon" id="iconDeskNote" style="position:absolute; top:110px; left:96px;">
+      <div class="glyph"><div class="fileIconG" data-ext="TXT" style="--ext-color:#6b6b6b;"></div></div>
+      <span>メモ</span>
+    </div>
 
     <!-- エクスプローラ -->
     <div class="winbox" id="explorerWin">
@@ -469,6 +531,7 @@
     <div class="startBtn">⊞</div>
     <div id="taskClock">00:00</div>
   </div>
+  <div class="toast" id="toast"></div>
 </div>
 
 <script>
@@ -697,51 +760,144 @@ const appClose = document.getElementById("appClose");
 const expBreadcrumb = document.getElementById("expBreadcrumb");
 const expList = document.getElementById("expList");
 const sidebarItems = document.querySelectorAll(".sItem");
+const toastEl = document.getElementById("toast");
 
 function enterDesktop() {
   state = "desktop";
   showScreen("desktop");
 }
 
-let lastClick = { path: null, t: 0 };
+let toastTimer = null;
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1800);
+}
+
+// path: quick=クイックアクセス(最近使用したファイル), pc=PC, desktop=デスクトップ, documents=ドキュメント, downloads=ダウンロード
+const FOLDER_CONTENTS = {
+  quick: {
+    label: "クイックアクセス",
+    sectionLabel: "最近使用したファイル",
+    items: [
+      { type: "app", name: "time_drive_console", ext: "EXE", color: "#2fa876" },
+      { type: "file", name: "実験ログ_0830", ext: "TXT", color: "#6b6b6b" },
+      { type: "file", name: "被験体観測記録", ext: "DOCX", color: "#2b579a" },
+    ],
+  },
+  pc: {
+    label: "PC",
+    items: [
+      { type: "folder", name: "ローカルディスク (C:)" },
+      { type: "folder", name: "リムーバブルディスク (E:)" },
+    ],
+  },
+  desktop: {
+    label: "デスクトップ",
+    items: [
+      { type: "folder", name: "資料" },
+      { type: "file", name: "メモ", ext: "TXT", color: "#6b6b6b" },
+    ],
+  },
+  documents: {
+    label: "ドキュメント",
+    items: [
+      { type: "app", name: "time_drive_console", ext: "EXE", color: "#2fa876" },
+      { type: "file", name: "実験計画書", ext: "DOCX", color: "#2b579a" },
+      { type: "file", name: "予算表", ext: "XLSX", color: "#1e7145" },
+      { type: "file", name: "スクリーンショット_2026-08", ext: "PNG", color: "#8a4fd6" },
+      { type: "folder", name: "過去ログ" },
+    ],
+  },
+  downloads: {
+    label: "ダウンロード",
+    items: [
+      { type: "file", name: "setup", ext: "ZIP", color: "#b8860b" },
+      { type: "file", name: "readme", ext: "TXT", color: "#6b6b6b" },
+    ],
+  },
+};
+
+function makeIconEl(item) {
+  if (item.type === "folder") {
+    const el = document.createElement("div");
+    el.className = "folderIcon";
+    return el;
+  }
+  const el = document.createElement("div");
+  el.className = "fileIconG";
+  el.dataset.ext = item.ext;
+  el.style.setProperty("--ext-color", item.color);
+  return el;
+}
+
 function renderFolder(path) {
   sidebarItems.forEach(el => el.classList.toggle("active", el.dataset.path === path));
-  const labels = { quick: "クイックアクセス", pc: "PC", desktop: "デスクトップ", documents: "ドキュメント", downloads: "ダウンロード" };
-  expBreadcrumb.textContent = "PC > " + (labels[path] || path);
+  const folder = FOLDER_CONTENTS[path];
+  expBreadcrumb.textContent = "PC > " + (folder ? folder.label : path);
   expList.innerHTML = "";
-  if (path === "documents") {
-    const entry = document.createElement("div");
-    entry.className = "expEntry";
-    entry.innerHTML = '<div class="fileIcon"></div><span>time_drive_console</span>';
-    entry.addEventListener("click", () => {
-      const now = Date.now();
-      const isDbl = lastClick.path === "console" && (now - lastClick.t) < 400;
-      lastClick = { path: "console", t: now };
-      document.querySelectorAll(".expEntry").forEach(e => e.classList.remove("sel"));
-      entry.classList.add("sel");
-      if (isDbl) openApp();
-    });
-    expList.appendChild(entry);
-  } else {
+
+  if (!folder || folder.items.length === 0) {
     const empty = document.createElement("div");
     empty.className = "expEmpty";
     empty.textContent = "このフォルダーは空です";
     expList.appendChild(empty);
+    return;
   }
+
+  if (folder.sectionLabel) {
+    const heading = document.createElement("div");
+    heading.className = "expSectionLabel";
+    heading.textContent = folder.sectionLabel;
+    expList.appendChild(heading);
+  }
+
+  folder.items.forEach((item) => {
+    const entry = document.createElement("div");
+    entry.className = "expEntry";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = item.name;
+
+    entry.appendChild(makeIconEl(item));
+    entry.appendChild(nameSpan);
+
+    entry.addEventListener("click", () => {
+      document.querySelectorAll(".expEntry").forEach(e => e.classList.remove("sel"));
+      entry.classList.add("sel");
+    });
+    entry.addEventListener("dblclick", () => {
+      if (item.type === "app") {
+        openApp();
+      } else if (item.type === "folder") {
+        showToast("このフォルダーにアクセスする権限がありません");
+      } else {
+        showToast("このファイルを開けません");
+      }
+    });
+
+    expList.appendChild(entry);
+  });
 }
 sidebarItems.forEach(el => {
   el.addEventListener("click", () => renderFolder(el.dataset.path));
 });
 renderFolder("documents");
 
-let explorerOpenedOnce = false;
 iconExplorer.addEventListener("dblclick", () => {
   explorerWin.classList.add("show");
   bringToFront(explorerWin);
-  explorerOpenedOnce = true;
 });
 explorerClose.addEventListener("click", () => explorerWin.classList.remove("show"));
 appClose.addEventListener("click", () => appWin.classList.remove("show"));
+
+const iconBin = document.getElementById("iconBin");
+const iconDeskFolder = document.getElementById("iconDeskFolder");
+const iconDeskNote = document.getElementById("iconDeskNote");
+iconBin.addEventListener("dblclick", () => showToast("ごみ箱は空です"));
+iconDeskFolder.addEventListener("dblclick", () => showToast("このフォルダーにアクセスする権限がありません"));
+iconDeskNote.addEventListener("dblclick", () => showToast("このファイルを開けません"));
 
 function bringToFront(win) {
   document.querySelectorAll(".winbox").forEach(w => w.style.zIndex = 1);
